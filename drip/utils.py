@@ -2,6 +2,8 @@ from functools import partial, wraps
 from typing import TYPE_CHECKING
 
 from requests import HTTPError, codes
+from requests.adapters import HTTPAdapter
+from gzip import compress
 
 if TYPE_CHECKING:
     from typing import Callable, Union, Any, List, Mapping
@@ -12,29 +14,41 @@ if TYPE_CHECKING:
 accepted_codes = {codes.ok, codes.created, codes.accepted, codes.no_content}  # pylint: disable=no-member
 
 
+class GzipAdapter(HTTPAdapter):
+    def add_headers(self, request, **kw):
+        if request.method == "POST":
+            request.headers["Content-Encoding"] = "gzip"
+
+    def send(self, request, **kw):
+        if request.method == "POST":
+            request.prepare_body(compress(request.body), None)
+            request.prepare_content_length(request.body)
+        return super().send(request, **kw)
+
+
 class DripApiError(Exception):
     def __init__(self, errors):
         self.errors = errors
         super().__init__()
 
     def __str__(self):
-        j = 'Drip REST API returned the following error(s):', *(f"\t{e['code']}: {e['message']}" for e in self.errors)
-        return '\n'.join(j)
+        j = "Drip REST API returned the following error(s):", *(f"\t{e['code']}: {e['message']}" for e in self.errors)
+        return "\n".join(j)
 
 
 class raise_response:
-
     def __call__(self, api_call):
         @wraps(api_call)
         def wrapped(client, *args, **kwargs):
             response = api_call(client, *args, **kwargs)
-            if 'errors' in response:
-                raise DripApiError(response['errors'])
+            if "errors" in response:
+                raise DripApiError(response["errors"])
             try:
                 response.raise_for_status()
             except HTTPError as exptn:
                 raise type(exptn)(*exptn.args).with_traceback(exptn.__traceback__)
             return response.status_code in accepted_codes
+
         return wrapped
 
 
@@ -57,18 +71,18 @@ class json_list:
 
     def __call__(self, api_call):
         @wraps(api_call)
-        def wrapped(client: 'Client', *args, **kwargs) -> 'Union[JsonListType, Response]':
-            page = kwargs.pop('page', 0)
-            per_page = kwargs.pop('per_page', 100)
-            wants_to_marshall = kwargs.pop('marshall', True)
+        def wrapped(client: "Client", *args, **kwargs) -> "Union[JsonListType, Response]":
+            page = kwargs.pop("page", 0)
+            per_page = kwargs.pop("per_page", 100)
+            wants_to_marshall = kwargs.pop("marshall", True)
 
-            frozen_api_call: 'Callable[..., Response]' = partial(api_call, client, *args, **kwargs)
+            frozen_api_call: "Callable[..., Response]" = partial(api_call, client, *args, **kwargs)
 
             # Do they want a specific page?
             if page > 0:
                 response_one_page = frozen_api_call(page=page, per_page=per_page)
-                if 'errors' in response_one_page.json():
-                    raise DripApiError(response_one_page.json()['errors'])  # stop yelling at me!
+                if "errors" in response_one_page.json():
+                    raise DripApiError(response_one_page.json()["errors"])  # stop yelling at me!
                 if wants_to_marshall:
                     return response_one_page.json()[self.section]
                 else:
@@ -76,37 +90,38 @@ class json_list:
             else:
                 # Get the 1st page
                 response_all_pages = frozen_api_call(page=1, per_page=1000).json()
-                if 'errors' in response_all_pages:
-                    raise DripApiError(response_all_pages['errors'])
+                if "errors" in response_all_pages:
+                    raise DripApiError(response_all_pages["errors"])
                 result = response_all_pages[self.section]
 
-                meta = response_all_pages.get('meta', False)
+                meta = response_all_pages.get("meta", False)
                 if meta:
-                    total_pages = meta.get('total_pages', 0)
+                    total_pages = meta.get("total_pages", 0)
                     if total_pages > 1:
                         # Loop through any remaining pages
-                        for next_page in range(2, total_pages+1):
+                        for next_page in range(2, total_pages + 1):
                             r = frozen_api_call(page=next_page, per_page=1000).json()
-                            if 'errors' in r:
-                                raise DripApiError(r['errors'])
+                            if "errors" in r:
+                                raise DripApiError(r["errors"])
                             result.extend(r[self.section])
                 return result
+
         return wrapped
 
 
 class json_object:
-
     def __init__(self, section):
         self.section = section
 
     def __call__(self, api_call):
         @wraps(api_call)
-        def wrapped(client: 'Client', *args, **kwargs) -> 'Union[JsonMappingType, Response]':
-            should_marshall = kwargs.pop('marshall', True)
+        def wrapped(client: "Client", *args, **kwargs) -> "Union[JsonMappingType, Response]":
+            should_marshall = kwargs.pop("marshall", True)
             result = api_call(client, *args, **kwargs)
-            if 'errors' in result:
-                raise DripApiError(result['errors'])
+            if "errors" in result:
+                raise DripApiError(result["errors"])
             if should_marshall:
                 return result.json()[self.section][0]
             return result
+
         return wrapped

@@ -9,6 +9,7 @@ from requests_toolbelt.sessions import BaseUrlSession
 
 from drip import __version__
 from drip.api import *
+from .utils import GzipAdapter
 
 if TYPE_CHECKING:
     from requests import Session
@@ -32,19 +33,20 @@ class Client(
     Workflows,
 ):
 
-    session: 'Session'
+    session: "Session"
     account_id: int
 
-    drip_py_ua: str = user_agent("drip-python", __version__, extras=[('requests', __requests_version__), ])
+    drip_py_ua: str = user_agent("drip-python", __version__, extras=[("requests", __requests_version__)])
     api_domain: str = "https://api.getdrip.com"
-    api_version: str = 'v2'
+    api_version: str = "v2"
 
     def __init__(self, api_token: str, account_id: int) -> None:
         self.account_id = account_id
 
         # Rather than assigning directly to `self`, this is the recommended idiom so atexit.register behaves nicely with GC.
-        session = BaseUrlSession(base_url=f'{self.api_domain}/{self.api_version}/{account_id}/')
-        session.auth = (api_token, '')
-        session.headers.update({"User-Agent": self.drip_py_ua, "Content-Type": 'application/json'})
+        session = BaseUrlSession(base_url=f"{self.api_domain}/{self.api_version}/{account_id}/")
+        session.auth = (api_token, "")
+        session.headers.update({"User-Agent": self.drip_py_ua})
+        session.mount(self.api_domain, GzipAdapter())
         register(session.close)
         self.session = session
